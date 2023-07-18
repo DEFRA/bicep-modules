@@ -1,0 +1,22 @@
+name: $(BuildID)
+trigger:
+  batch: true
+  branches:
+    include:
+      - "*"
+  paths:
+    include:
+      - "modules/*"
+pr:
+  - main
+
+resources:
+  repositories:
+    - repository: adp-bicep-pipeline-common
+      type: github
+      endpoint: DEFRA
+      name: DEFRA/adp-pipeline-common
+      ref: main
+
+extends:
+  template: /pipelines/bicep-module/validate-publish-module.yaml@adp-bicep-pipeline-common
