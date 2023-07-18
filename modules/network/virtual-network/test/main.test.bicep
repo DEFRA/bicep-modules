@@ -114,10 +114,20 @@ module genvnet '../main.bicep' = {
   name: '${uniqueString(deployment().name, location)}-genvnet'
   params: {
     name: '${serviceShort}-az-vnet-gen-01'
+    enableDefaultTelemetry: true
     location: location
+    tags: {
+      Environment: 'Non-Prod'
+      Role: 'DeploymentValidation'
+    }
     addressPrefixes: [
       '10.0.0.0/16'
     ]
+    dnsServers: [
+      '10.0.1.4'
+      '10.0.1.5'
+    ]
+    flowTimeoutInMinutes: 20
     subnets: [
       {
         name: 'GatewaySubnet'
@@ -156,6 +166,7 @@ module genvnet '../main.bicep' = {
         privateLinkServiceNetworkPolicies: 'Enabled'
       }
     ]
+    lock: 'CanNotDelete'
     roleAssignments: [
       {
         roleDefinitionIdOrName: 'Reader'
