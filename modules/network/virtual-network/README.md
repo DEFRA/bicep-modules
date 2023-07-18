@@ -52,7 +52,7 @@ Use this module within other Bicep templates to simplify the usage of a Virtual 
 An example of how to deploy a virtual network using the minimum required parameters.
 
 ```bicep
-module minvnet 'br/public:network/virtual-network:1.0' = {
+module minvnet 'br:<acr>.azurecr.io/bicep/network/virtual-network:<version>' = {
   name: '${uniqueString(deployment().name, 'WestEurope')}-minvnet'
   params: {
     name: 'carml-az-vnet-min-01'
@@ -68,14 +68,23 @@ module minvnet 'br/public:network/virtual-network:1.0' = {
 An example of how to deploy a virtual network with multiple subnets, role assignment and diagnostic settings.
 
 ```bicep
-module genvnet 'br/public:network/virtual-network:1.0' = {
+module genvnet 'br:<acr>.azurecr.io/bicep/network/virtual-network:<version>' = {
   name: '${uniqueString(deployment().name, 'WestEurope')}-genvnet'
   params: {
     name: 'carml-az-vnet-gen-01'
     location: 'WestEurope'
+    enableDefaultTelemetry: '<enableDefaultTelemetry>'
     addressPrefixes: [
       '10.0.0.0/16'
     ]
+     dnsServers: [
+      '10.0.1.4'
+      '10.0.1.5'
+    ]
+    tags: {
+      Environment: 'Non-Prod'
+      Role: 'DeploymentValidation'
+    }
     subnets: [
       {
         name: 'GatewaySubnet'
@@ -137,7 +146,7 @@ module genvnet 'br/public:network/virtual-network:1.0' = {
 An example that deploys a virtual network with one subnet including a bi-directional peering to another virtual network.
 
 ```bicep
-module peervnet 'br/public:network/virtual-network:1.0' = {
+module peervnet 'br:<acr>.azurecr.io/bicep/network/virtual-network:<version>' = {
   name: '${uniqueString(deployment().name, 'WestEurope')}-peervnet'
   params: {
     name: 'carml-az-vnet-peer-01'
@@ -153,7 +162,7 @@ module peervnet 'br/public:network/virtual-network:1.0' = {
       }
     ]
 
-    virtualNetworkPeerings: [
+    peerings: [
       {
         remoteVirtualNetworkId: '/subscriptions/111111-1111-1111-1111-111111111111/resourceGroups/validation-rg/providers/Microsoft.Network/virtualNetworks/adp-carml-az-vnet-x-001'
         allowForwardedTraffic: true
