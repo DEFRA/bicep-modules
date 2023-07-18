@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.18.4.5664",
-      "templateHash": "2295522440087515620"
+      "templateHash": "3328508238662978850"
     }
   },
   "parameters": {
@@ -49,12 +49,38 @@
         "description": "Optional. Resource ID of the DDoS protection plan to assign the VNET to. If it's left blank, DDoS protection will not be configured. If it's provided, the VNET created by this template will be attached to the referenced DDoS protection plan. The DDoS protection plan can exist in the same or in a different subscription."
       }
     },
-    "virtualNetworkPeerings": {
+    "peerings": {
       "type": "array",
       "defaultValue": [],
       "metadata": {
-        "description": "Optional. Virtual Network Peerings configurations. Please refer to the [virtualNetworkPeerings](virtualNetworkPeerings/readme.md) readme"
+        "description": "Optional. Virtual Network Peerings configurations."
       }
+    },
+    "vnetEncryption": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Optional. Indicates if encryption is enabled on virtual network and if VM without encryption is allowed in encrypted VNet. Requires the EnableVNetEncryption feature to be registered for the subscription and a supported region to use this property."
+      }
+    },
+    "vnetEncryptionEnforcement": {
+      "type": "string",
+      "defaultValue": "AllowUnencrypted",
+      "metadata": {
+        "description": "Optional. If the encrypted VNet allows VM that does not support encryption. Can only be used when vnetEncryption is enabled."
+      },
+      "allowedValues": [
+        "AllowUnencrypted",
+        "DropUnencrypted"
+      ]
+    },
+    "flowTimeoutInMinutes": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": {
+        "description": "Optional. The flow timeout in minutes for the Virtual Network, which is used to enable connection tracking for intra-VM flows. Possible values are between 4 and 30 minutes. Default value 0 will set the property to null."
+      },
+      "maxValue": 30
     },
     "diagnosticLogsRetentionInDays": {
       "type": "int",
@@ -95,13 +121,13 @@
     },
     "lock": {
       "type": "string",
-      "defaultValue": "NotSpecified",
+      "defaultValue": "",
       "metadata": {
         "description": "Optional. Specify the type of lock."
       },
       "allowedValues": [
+        "",
         "CanNotDelete",
-        "NotSpecified",
         "ReadOnly"
       ]
     },
@@ -109,7 +135,7 @@
       "type": "array",
       "defaultValue": [],
       "metadata": {
-        "description": "Optional. Array of role assignment objects that contain the 'roleDefinitionIdOrName' and 'principalId' to define RBAC role assignments on this resource. In the roleDefinitionIdOrName attribute, you can provide either the display name of the role definition, or its fully qualified ID in the following format: '/providers/Microsoft.Authorization/roleDefinitions/c2f4ef07-c644-48eb-af81-4b1b4947fb11'"
+        "description": "Optional. Array of role assignment objects that contain the 'roleDefinitionIdOrName' and 'principalId' to define RBAC role assignments on this resource. In the roleDefinitionIdOrName attribute, you can provide either the display name of the role definition, or its fully qualified ID in the following format: '/providers/Microsoft.Authorization/roleDefinitions/c2f4ef07-c644-48eb-af81-4b1b4947fb11'."
       }
     },
     "tags": {
@@ -119,19 +145,27 @@
         "description": "Optional. Tags of the resource."
       }
     },
-    "logsToEnable": {
+    "enableDefaultTelemetry": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Optional. Enable telemetry via a Globally Unique Identifier (GUID)."
+      }
+    },
+    "diagnosticLogCategoriesToEnable": {
       "type": "array",
       "defaultValue": [
-        "VMProtectionAlerts"
+        "allLogs"
       ],
       "allowedValues": [
+        "allLogs",
         "VMProtectionAlerts"
       ],
       "metadata": {
-        "description": "Optional. The name of logs that will be streamed."
+        "description": "Optional. The name of logs that will be streamed. \"allLogs\" includes all possible logs for the resource."
       }
     },
-    "metricsToEnable": {
+    "diagnosticMetricsToEnable": {
       "type": "array",
       "defaultValue": [
         "AllMetrics"
@@ -143,33 +177,21 @@
         "description": "Optional. The name of metrics that will be streamed."
       }
     },
-    "newOrExistingNSG": {
+    "diagnosticSettingsName": {
       "type": "string",
-      "defaultValue": "none",
+      "defaultValue": "",
       "metadata": {
-        "description": "Create a new, use an existing, or provide no default NSG."
-      },
-      "allowedValues": [
-        "new",
-        "existing",
-        "none"
-      ]
-    },
-    "networkSecurityGroupName": {
-      "type": "string",
-      "defaultValue": "[uniqueString(resourceGroup().name, parameters('location'))]",
-      "metadata": {
-        "description": "Name of default NSG to use for subnets."
+        "description": "Optional. The name of the diagnostic setting, if deployed. If left empty, it defaults to \"<resourceName>-diagnosticSettings\"."
       }
     }
   },
   "variables": {
     "copy": [
       {
-        "name": "diagnosticsLogs",
-        "count": "[length(parameters('logsToEnable'))]",
+        "name": "diagnosticsLogsSpecified",
+        "count": "[length(filter(parameters('diagnosticLogCategoriesToEnable'), lambda('item', not(equals(lambdaVariables('item'), 'allLogs')))))]",
         "input": {
-          "category": "[parameters('logsToEnable')[copyIndex('diagnosticsLogs')]]",
+          "category": "[filter(parameters('diagnosticLogCategoriesToEnable'), lambda('item', not(equals(lambdaVariables('item'), 'allLogs'))))[copyIndex('diagnosticsLogsSpecified')]]",
           "enabled": true,
           "retentionPolicy": {
             "enabled": true,
@@ -179,9 +201,9 @@
       },
       {
         "name": "diagnosticsMetrics",
-        "count": "[length(parameters('metricsToEnable'))]",
+        "count": "[length(parameters('diagnosticMetricsToEnable'))]",
         "input": {
-          "category": "[parameters('metricsToEnable')[copyIndex('diagnosticsMetrics')]]",
+          "category": "[parameters('diagnosticMetricsToEnable')[copyIndex('diagnosticsMetrics')]]",
           "timeGrain": null,
           "enabled": true,
           "retentionPolicy": {
@@ -191,24 +213,33 @@
         }
       }
     ],
+    "diagnosticsLogs": "[if(contains(parameters('diagnosticLogCategoriesToEnable'), 'allLogs'), createArray(createObject('categoryGroup', 'allLogs', 'enabled', true(), 'retentionPolicy', createObject('enabled', true(), 'days', parameters('diagnosticLogsRetentionInDays')))), variables('diagnosticsLogsSpecified'))]",
+    "dnsServersVar": {
+      "dnsServers": "[array(parameters('dnsServers'))]"
+    },
     "ddosProtectionPlan": {
       "id": "[parameters('ddosProtectionPlanId')]"
     },
-    "networkSecurityGroupId": {
-      "id": "[if(equals(parameters('newOrExistingNSG'), 'new'), resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName')), resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName')))]"
-    }
+    "enableReferencedModulesTelemetry": false
   },
   "resources": [
     {
-      "condition": "[equals(parameters('newOrExistingNSG'), 'new')]",
-      "type": "Microsoft.Network/networkSecurityGroups",
-      "apiVersion": "2021-08-01",
-      "name": "[parameters('networkSecurityGroupName')]",
-      "location": "[parameters('location')]"
+      "condition": "[parameters('enableDefaultTelemetry')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2021-04-01",
+      "name": "[format('pid-47ed15a6-730a-4827-bcb4-0fd963ffbd82-{0}', uniqueString(deployment().name, parameters('location')))]",
+      "properties": {
+        "mode": "Incremental",
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "resources": []
+        }
+      }
     },
     {
       "type": "Microsoft.Network/virtualNetworks",
-      "apiVersion": "2021-05-01",
+      "apiVersion": "2022-07-01",
       "name": "[parameters('name')]",
       "location": "[parameters('location')]",
       "tags": "[parameters('tags')]",
@@ -226,7 +257,7 @@
                 "delegations": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'delegations'), parameters('subnets')[copyIndex('subnets')].delegations, createArray())]",
                 "ipAllocations": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'ipAllocations'), parameters('subnets')[copyIndex('subnets')].ipAllocations, createArray())]",
                 "natGateway": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'natGatewayId'), createObject('id', parameters('subnets')[copyIndex('subnets')].natGatewayId), null())]",
-                "networkSecurityGroup": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'networkSecurityGroupId'), createObject('id', parameters('subnets')[copyIndex('subnets')].networkSecurityGroupId), if(not(equals(parameters('newOrExistingNSG'), 'none')), variables('networkSecurityGroupId'), null()))]",
+                "networkSecurityGroup": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'networkSecurityGroupId'), createObject('id', parameters('subnets')[copyIndex('subnets')].networkSecurityGroupId), null())]",
                 "privateEndpointNetworkPolicies": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'privateEndpointNetworkPolicies'), parameters('subnets')[copyIndex('subnets')].privateEndpointNetworkPolicies, null())]",
                 "privateLinkServiceNetworkPolicies": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'privateLinkServiceNetworkPolicies'), parameters('subnets')[copyIndex('subnets')].privateLinkServiceNetworkPolicies, null())]",
                 "routeTable": "[if(contains(parameters('subnets')[copyIndex('subnets')], 'routeTableId'), createObject('id', parameters('subnets')[copyIndex('subnets')].routeTableId), null())]",
@@ -240,17 +271,16 @@
           "addressPrefixes": "[parameters('addressPrefixes')]"
         },
         "ddosProtectionPlan": "[if(not(empty(parameters('ddosProtectionPlanId'))), variables('ddosProtectionPlan'), null())]",
-        "dhcpOptions": "[if(not(empty(parameters('dnsServers'))), createObject('dnsServers', array(parameters('dnsServers'))), null())]",
-        "enableDdosProtection": "[not(empty(parameters('ddosProtectionPlanId')))]"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('networkSecurityGroupName'))]"
-      ]
+        "dhcpOptions": "[if(not(empty(parameters('dnsServers'))), variables('dnsServersVar'), null())]",
+        "enableDdosProtection": "[not(empty(parameters('ddosProtectionPlanId')))]",
+        "encryption": "[if(equals(parameters('vnetEncryption'), true()), createObject('enabled', parameters('vnetEncryption'), 'enforcement', parameters('vnetEncryptionEnforcement')), null())]",
+        "flowTimeoutInMinutes": "[if(not(equals(parameters('flowTimeoutInMinutes'), 0)), parameters('flowTimeoutInMinutes'), null())]"
+      }
     },
     {
-      "condition": "[not(equals(parameters('lock'), 'NotSpecified'))]",
+      "condition": "[not(empty(parameters('lock')))]",
       "type": "Microsoft.Authorization/locks",
-      "apiVersion": "2017-04-01",
+      "apiVersion": "2020-05-01",
       "scope": "[format('Microsoft.Network/virtualNetworks/{0}', parameters('name'))]",
       "name": "[format('{0}-{1}-lock', parameters('name'), parameters('lock'))]",
       "properties": {
@@ -266,7 +296,7 @@
       "type": "Microsoft.Insights/diagnosticSettings",
       "apiVersion": "2021-05-01-preview",
       "scope": "[format('Microsoft.Network/virtualNetworks/{0}', parameters('name'))]",
-      "name": "[format('{0}-diagnosticSettings', parameters('name'))]",
+      "name": "[if(not(empty(parameters('diagnosticSettingsName'))), parameters('diagnosticSettingsName'), format('{0}-diagnosticSettings', parameters('name')))]",
       "properties": {
         "storageAccountId": "[if(not(empty(parameters('diagnosticStorageAccountId'))), parameters('diagnosticStorageAccountId'), null())]",
         "workspaceId": "[if(not(empty(parameters('diagnosticWorkspaceId'))), parameters('diagnosticWorkspaceId'), null())]",
@@ -282,7 +312,7 @@
     {
       "copy": {
         "name": "virtualNetwork_peering_local",
-        "count": "[length(parameters('virtualNetworkPeerings'))]"
+        "count": "[length(parameters('peerings'))]"
       },
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2022-09-01",
@@ -297,14 +327,17 @@
             "value": "[parameters('name')]"
           },
           "remoteVirtualNetworkId": {
-            "value": "[parameters('virtualNetworkPeerings')[copyIndex()].remoteVirtualNetworkId]"
+            "value": "[parameters('peerings')[copyIndex()].remoteVirtualNetworkId]"
           },
-          "name": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'name'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].name), createObject('value', format('{0}-{1}', parameters('name'), last(split(parameters('virtualNetworkPeerings')[copyIndex()].remoteVirtualNetworkId, '/')))))]",
-          "allowForwardedTraffic": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'allowForwardedTraffic'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].allowForwardedTraffic), createObject('value', true()))]",
-          "allowGatewayTransit": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'allowGatewayTransit'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].allowGatewayTransit), createObject('value', false()))]",
-          "allowVirtualNetworkAccess": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'allowVirtualNetworkAccess'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].allowVirtualNetworkAccess), createObject('value', true()))]",
-          "doNotVerifyRemoteGateways": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'doNotVerifyRemoteGateways'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].doNotVerifyRemoteGateways), createObject('value', true()))]",
-          "useRemoteGateways": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'useRemoteGateways'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].useRemoteGateways), createObject('value', false()))]"
+          "name": "[if(contains(parameters('peerings')[copyIndex()], 'name'), createObject('value', parameters('peerings')[copyIndex()].name), createObject('value', format('{0}-{1}', parameters('name'), last(split(parameters('peerings')[copyIndex()].remoteVirtualNetworkId, '/')))))]",
+          "allowForwardedTraffic": "[if(contains(parameters('peerings')[copyIndex()], 'allowForwardedTraffic'), createObject('value', parameters('peerings')[copyIndex()].allowForwardedTraffic), createObject('value', true()))]",
+          "allowGatewayTransit": "[if(contains(parameters('peerings')[copyIndex()], 'allowGatewayTransit'), createObject('value', parameters('peerings')[copyIndex()].allowGatewayTransit), createObject('value', false()))]",
+          "allowVirtualNetworkAccess": "[if(contains(parameters('peerings')[copyIndex()], 'allowVirtualNetworkAccess'), createObject('value', parameters('peerings')[copyIndex()].allowVirtualNetworkAccess), createObject('value', true()))]",
+          "doNotVerifyRemoteGateways": "[if(contains(parameters('peerings')[copyIndex()], 'doNotVerifyRemoteGateways'), createObject('value', parameters('peerings')[copyIndex()].doNotVerifyRemoteGateways), createObject('value', true()))]",
+          "useRemoteGateways": "[if(contains(parameters('peerings')[copyIndex()], 'useRemoteGateways'), createObject('value', parameters('peerings')[copyIndex()].useRemoteGateways), createObject('value', false()))]",
+          "enableDefaultTelemetry": {
+            "value": "[variables('enableReferencedModulesTelemetry')]"
+          }
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -313,7 +346,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.18.4.5664",
-              "templateHash": "7438507019841595309"
+              "templateHash": "14113542671107167377"
             }
           },
           "parameters": {
@@ -321,61 +354,82 @@
               "type": "string",
               "defaultValue": "[format('{0}-{1}', parameters('localVnetName'), last(split(parameters('remoteVirtualNetworkId'), '/')))]",
               "metadata": {
-                "description": "Optional. The Name of Vnet Peering resource. If not provided, default value will be localVnetName-remoteVnetName"
+                "description": "Optional. The Name of Vnet Peering resource. If not provided, default value will be localVnetName-remoteVnetName."
               }
             },
             "localVnetName": {
               "type": "string",
               "metadata": {
-                "description": "Required. The Name of the Virtual Network to add the peering to."
+                "description": "Conditional. The name of the parent Virtual Network to add the peering to. Required if the template is used in a standalone deployment."
               }
             },
             "remoteVirtualNetworkId": {
               "type": "string",
               "metadata": {
-                "description": "Required. The Resource ID of the VNet that is this Local VNet is being peered to. Should be in the format of a Resource ID"
+                "description": "Required. The Resource ID of the VNet that is this Local VNet is being peered to. Should be in the format of a Resource ID."
               }
             },
             "allowForwardedTraffic": {
               "type": "bool",
               "defaultValue": true,
               "metadata": {
-                "description": "Optional. Whether the forwarded traffic from the VMs in the local virtual network will be allowed/disallowed in remote virtual network. Default is true"
+                "description": "Optional. Whether the forwarded traffic from the VMs in the local virtual network will be allowed/disallowed in remote virtual network. Default is true."
               }
             },
             "allowGatewayTransit": {
               "type": "bool",
               "defaultValue": false,
               "metadata": {
-                "description": "Optional. If gateway links can be used in remote virtual networking to link to this virtual network. Default is false"
+                "description": "Optional. If gateway links can be used in remote virtual networking to link to this virtual network. Default is false."
               }
             },
             "allowVirtualNetworkAccess": {
               "type": "bool",
               "defaultValue": true,
               "metadata": {
-                "description": "Optional. Whether the VMs in the local virtual network space would be able to access the VMs in remote virtual network space. Default is true"
+                "description": "Optional. Whether the VMs in the local virtual network space would be able to access the VMs in remote virtual network space. Default is true."
               }
             },
             "doNotVerifyRemoteGateways": {
               "type": "bool",
               "defaultValue": true,
               "metadata": {
-                "description": "Optional. If we need to verify the provisioning state of the remote gateway. Default is true"
+                "description": "Optional. If we need to verify the provisioning state of the remote gateway. Default is true."
               }
             },
             "useRemoteGateways": {
               "type": "bool",
               "defaultValue": false,
               "metadata": {
-                "description": "Optional. If remote gateways can be used on this virtual network. If the flag is set to true, and allowGatewayTransit on remote peering is also true, virtual network will use gateways of remote virtual network for transit. Only one peering can have this flag set to true. This flag cannot be set if virtual network already has a gateway. Default is false"
+                "description": "Optional. If remote gateways can be used on this virtual network. If the flag is set to true, and allowGatewayTransit on remote peering is also true, virtual network will use gateways of remote virtual network for transit. Only one peering can have this flag set to true. This flag cannot be set if virtual network already has a gateway. Default is false."
+              }
+            },
+            "enableDefaultTelemetry": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Optional. Enable telemetry via a Globally Unique Identifier (GUID)."
               }
             }
           },
           "resources": [
             {
+              "condition": "[parameters('enableDefaultTelemetry')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2021-04-01",
+              "name": "[format('pid-47ed15a6-730a-4827-bcb4-0fd963ffbd82-{0}', uniqueString(deployment().name))]",
+              "properties": {
+                "mode": "Incremental",
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "resources": []
+                }
+              }
+            },
+            {
               "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
-              "apiVersion": "2022-01-01",
+              "apiVersion": "2022-07-01",
               "name": "[format('{0}/{1}', parameters('localVnetName'), parameters('name'))]",
               "properties": {
                 "allowForwardedTraffic": "[parameters('allowForwardedTraffic')]",
@@ -393,21 +447,21 @@
             "resourceGroupName": {
               "type": "string",
               "metadata": {
-                "description": "The resource group the virtual network peering was deployed into"
+                "description": "The resource group the virtual network peering was deployed into."
               },
               "value": "[resourceGroup().name]"
             },
             "name": {
               "type": "string",
               "metadata": {
-                "description": "The name of the virtual network peering"
+                "description": "The name of the virtual network peering."
               },
               "value": "[parameters('name')]"
             },
             "resourceId": {
               "type": "string",
               "metadata": {
-                "description": "The resource ID of the virtual network peering"
+                "description": "The resource ID of the virtual network peering."
               },
               "value": "[resourceId('Microsoft.Network/virtualNetworks/virtualNetworkPeerings', parameters('localVnetName'), parameters('name'))]"
             }
@@ -421,14 +475,14 @@
     {
       "copy": {
         "name": "virtualNetwork_peering_remote",
-        "count": "[length(parameters('virtualNetworkPeerings'))]"
+        "count": "[length(parameters('peerings'))]"
       },
-      "condition": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringEnabled'), equals(parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringEnabled, true()), false())]",
+      "condition": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringEnabled'), equals(parameters('peerings')[copyIndex()].remotePeeringEnabled, true()), false())]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2022-09-01",
       "name": "[format('{0}-virtualNetworkPeering-remote-{1}', uniqueString(deployment().name, parameters('location')), copyIndex())]",
-      "subscriptionId": "[split(parameters('virtualNetworkPeerings')[copyIndex()].remoteVirtualNetworkId, '/')[2]]",
-      "resourceGroup": "[split(parameters('virtualNetworkPeerings')[copyIndex()].remoteVirtualNetworkId, '/')[4]]",
+      "subscriptionId": "[split(parameters('peerings')[copyIndex()].remoteVirtualNetworkId, '/')[2]]",
+      "resourceGroup": "[split(parameters('peerings')[copyIndex()].remoteVirtualNetworkId, '/')[4]]",
       "properties": {
         "expressionEvaluationOptions": {
           "scope": "inner"
@@ -436,17 +490,20 @@
         "mode": "Incremental",
         "parameters": {
           "localVnetName": {
-            "value": "[last(split(parameters('virtualNetworkPeerings')[copyIndex()].remoteVirtualNetworkId, '/'))]"
+            "value": "[last(split(parameters('peerings')[copyIndex()].remoteVirtualNetworkId, '/'))]"
           },
           "remoteVirtualNetworkId": {
             "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('name'))]"
           },
-          "name": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringName'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringName), createObject('value', format('{0}-{1}', last(split(parameters('virtualNetworkPeerings')[copyIndex()].remoteVirtualNetworkId, '/')), parameters('name'))))]",
-          "allowForwardedTraffic": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringAllowForwardedTraffic'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringAllowForwardedTraffic), createObject('value', true()))]",
-          "allowGatewayTransit": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringAllowGatewayTransit'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringAllowGatewayTransit), createObject('value', false()))]",
-          "allowVirtualNetworkAccess": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringAllowVirtualNetworkAccess'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringAllowVirtualNetworkAccess), createObject('value', true()))]",
-          "doNotVerifyRemoteGateways": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringDoNotVerifyRemoteGateways'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringDoNotVerifyRemoteGateways), createObject('value', true()))]",
-          "useRemoteGateways": "[if(contains(parameters('virtualNetworkPeerings')[copyIndex()], 'remotePeeringUseRemoteGateways'), createObject('value', parameters('virtualNetworkPeerings')[copyIndex()].remotePeeringUseRemoteGateways), createObject('value', false()))]"
+          "name": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringName'), createObject('value', parameters('peerings')[copyIndex()].remotePeeringName), createObject('value', format('{0}-{1}', last(split(parameters('peerings')[copyIndex()].remoteVirtualNetworkId, '/')), parameters('name'))))]",
+          "allowForwardedTraffic": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringAllowForwardedTraffic'), createObject('value', parameters('peerings')[copyIndex()].remotePeeringAllowForwardedTraffic), createObject('value', true()))]",
+          "allowGatewayTransit": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringAllowGatewayTransit'), createObject('value', parameters('peerings')[copyIndex()].remotePeeringAllowGatewayTransit), createObject('value', false()))]",
+          "allowVirtualNetworkAccess": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringAllowVirtualNetworkAccess'), createObject('value', parameters('peerings')[copyIndex()].remotePeeringAllowVirtualNetworkAccess), createObject('value', true()))]",
+          "doNotVerifyRemoteGateways": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringDoNotVerifyRemoteGateways'), createObject('value', parameters('peerings')[copyIndex()].remotePeeringDoNotVerifyRemoteGateways), createObject('value', true()))]",
+          "useRemoteGateways": "[if(contains(parameters('peerings')[copyIndex()], 'remotePeeringUseRemoteGateways'), createObject('value', parameters('peerings')[copyIndex()].remotePeeringUseRemoteGateways), createObject('value', false()))]",
+          "enableDefaultTelemetry": {
+            "value": "[variables('enableReferencedModulesTelemetry')]"
+          }
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -455,7 +512,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.18.4.5664",
-              "templateHash": "7438507019841595309"
+              "templateHash": "14113542671107167377"
             }
           },
           "parameters": {
@@ -463,61 +520,82 @@
               "type": "string",
               "defaultValue": "[format('{0}-{1}', parameters('localVnetName'), last(split(parameters('remoteVirtualNetworkId'), '/')))]",
               "metadata": {
-                "description": "Optional. The Name of Vnet Peering resource. If not provided, default value will be localVnetName-remoteVnetName"
+                "description": "Optional. The Name of Vnet Peering resource. If not provided, default value will be localVnetName-remoteVnetName."
               }
             },
             "localVnetName": {
               "type": "string",
               "metadata": {
-                "description": "Required. The Name of the Virtual Network to add the peering to."
+                "description": "Conditional. The name of the parent Virtual Network to add the peering to. Required if the template is used in a standalone deployment."
               }
             },
             "remoteVirtualNetworkId": {
               "type": "string",
               "metadata": {
-                "description": "Required. The Resource ID of the VNet that is this Local VNet is being peered to. Should be in the format of a Resource ID"
+                "description": "Required. The Resource ID of the VNet that is this Local VNet is being peered to. Should be in the format of a Resource ID."
               }
             },
             "allowForwardedTraffic": {
               "type": "bool",
               "defaultValue": true,
               "metadata": {
-                "description": "Optional. Whether the forwarded traffic from the VMs in the local virtual network will be allowed/disallowed in remote virtual network. Default is true"
+                "description": "Optional. Whether the forwarded traffic from the VMs in the local virtual network will be allowed/disallowed in remote virtual network. Default is true."
               }
             },
             "allowGatewayTransit": {
               "type": "bool",
               "defaultValue": false,
               "metadata": {
-                "description": "Optional. If gateway links can be used in remote virtual networking to link to this virtual network. Default is false"
+                "description": "Optional. If gateway links can be used in remote virtual networking to link to this virtual network. Default is false."
               }
             },
             "allowVirtualNetworkAccess": {
               "type": "bool",
               "defaultValue": true,
               "metadata": {
-                "description": "Optional. Whether the VMs in the local virtual network space would be able to access the VMs in remote virtual network space. Default is true"
+                "description": "Optional. Whether the VMs in the local virtual network space would be able to access the VMs in remote virtual network space. Default is true."
               }
             },
             "doNotVerifyRemoteGateways": {
               "type": "bool",
               "defaultValue": true,
               "metadata": {
-                "description": "Optional. If we need to verify the provisioning state of the remote gateway. Default is true"
+                "description": "Optional. If we need to verify the provisioning state of the remote gateway. Default is true."
               }
             },
             "useRemoteGateways": {
               "type": "bool",
               "defaultValue": false,
               "metadata": {
-                "description": "Optional. If remote gateways can be used on this virtual network. If the flag is set to true, and allowGatewayTransit on remote peering is also true, virtual network will use gateways of remote virtual network for transit. Only one peering can have this flag set to true. This flag cannot be set if virtual network already has a gateway. Default is false"
+                "description": "Optional. If remote gateways can be used on this virtual network. If the flag is set to true, and allowGatewayTransit on remote peering is also true, virtual network will use gateways of remote virtual network for transit. Only one peering can have this flag set to true. This flag cannot be set if virtual network already has a gateway. Default is false."
+              }
+            },
+            "enableDefaultTelemetry": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Optional. Enable telemetry via a Globally Unique Identifier (GUID)."
               }
             }
           },
           "resources": [
             {
+              "condition": "[parameters('enableDefaultTelemetry')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2021-04-01",
+              "name": "[format('pid-47ed15a6-730a-4827-bcb4-0fd963ffbd82-{0}', uniqueString(deployment().name))]",
+              "properties": {
+                "mode": "Incremental",
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "resources": []
+                }
+              }
+            },
+            {
               "type": "Microsoft.Network/virtualNetworks/virtualNetworkPeerings",
-              "apiVersion": "2022-01-01",
+              "apiVersion": "2022-07-01",
               "name": "[format('{0}/{1}', parameters('localVnetName'), parameters('name'))]",
               "properties": {
                 "allowForwardedTraffic": "[parameters('allowForwardedTraffic')]",
@@ -535,21 +613,21 @@
             "resourceGroupName": {
               "type": "string",
               "metadata": {
-                "description": "The resource group the virtual network peering was deployed into"
+                "description": "The resource group the virtual network peering was deployed into."
               },
               "value": "[resourceGroup().name]"
             },
             "name": {
               "type": "string",
               "metadata": {
-                "description": "The name of the virtual network peering"
+                "description": "The name of the virtual network peering."
               },
               "value": "[parameters('name')]"
             },
             "resourceId": {
               "type": "string",
               "metadata": {
-                "description": "The resource ID of the virtual network peering"
+                "description": "The resource ID of the virtual network peering."
               },
               "value": "[resourceId('Microsoft.Network/virtualNetworks/virtualNetworkPeerings', parameters('localVnetName'), parameters('name'))]"
             }
@@ -562,7 +640,7 @@
     },
     {
       "copy": {
-        "name": "virtualNetwork_rbac",
+        "name": "virtualNetwork_roleAssignments",
         "count": "[length(parameters('roleAssignments'))]"
       },
       "type": "Microsoft.Resources/deployments",
@@ -578,10 +656,12 @@
           "principalIds": {
             "value": "[parameters('roleAssignments')[copyIndex()].principalIds]"
           },
+          "principalType": "[if(contains(parameters('roleAssignments')[copyIndex()], 'principalType'), createObject('value', parameters('roleAssignments')[copyIndex()].principalType), createObject('value', ''))]",
           "roleDefinitionIdOrName": {
             "value": "[parameters('roleAssignments')[copyIndex()].roleDefinitionIdOrName]"
           },
-          "principalType": "[if(contains(parameters('roleAssignments')[copyIndex()], 'principalType'), createObject('value', parameters('roleAssignments')[copyIndex()].principalType), createObject('value', ''))]",
+          "condition": "[if(contains(parameters('roleAssignments')[copyIndex()], 'condition'), createObject('value', parameters('roleAssignments')[copyIndex()].condition), createObject('value', ''))]",
+          "delegatedManagedIdentityResourceId": "[if(contains(parameters('roleAssignments')[copyIndex()], 'delegatedManagedIdentityResourceId'), createObject('value', parameters('roleAssignments')[copyIndex()].delegatedManagedIdentityResourceId), createObject('value', ''))]",
           "resourceId": {
             "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('name'))]"
           }
@@ -593,60 +673,119 @@
             "_generator": {
               "name": "bicep",
               "version": "0.18.4.5664",
-              "templateHash": "17695426820774186236"
+              "templateHash": "18431427062084145620"
             }
           },
           "parameters": {
-            "description": {
-              "type": "string",
-              "defaultValue": ""
-            },
             "principalIds": {
-              "type": "array"
+              "type": "array",
+              "metadata": {
+                "description": "Required. The IDs of the principals to assign the role to."
+              }
+            },
+            "roleDefinitionIdOrName": {
+              "type": "string",
+              "metadata": {
+                "description": "Required. The name of the role to assign. If it cannot be found you can specify the role definition ID instead."
+              }
+            },
+            "resourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Required. The resource ID of the resource to apply the role assignment to."
+              }
             },
             "principalType": {
               "type": "string",
-              "defaultValue": ""
+              "defaultValue": "",
+              "allowedValues": [
+                "ServicePrincipal",
+                "Group",
+                "User",
+                "ForeignGroup",
+                "Device",
+                ""
+              ],
+              "metadata": {
+                "description": "Optional. The principal type of the assigned principal ID."
+              }
             },
-            "roleDefinitionIdOrName": {
-              "type": "string"
+            "description": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. The description of the role assignment."
+              }
             },
-            "resourceId": {
-              "type": "string"
+            "condition": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. The conditions on the role assignment. This limits the resources it can be assigned to. e.g.: @Resource[Microsoft.Storage/storageAccounts/blobServices/containers:ContainerName] StringEqualsIgnoreCase \"foo_storage_container\"."
+              }
+            },
+            "conditionVersion": {
+              "type": "string",
+              "defaultValue": "2.0",
+              "allowedValues": [
+                "2.0"
+              ],
+              "metadata": {
+                "description": "Optional. Version of the condition."
+              }
+            },
+            "delegatedManagedIdentityResourceId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Id of the delegated managed identity resource."
+              }
             }
           },
           "variables": {
             "builtInRoleNames": {
-              "Owner": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]",
-              "Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
-              "Reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
               "Avere Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4f8fab4f-1852-4a58-a46a-8eaf358af14a')]",
               "Avere Operator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'c025889f-8102-4ebf-b32c-fc0c6f0c6bd9')]",
+              "Azure Center for SAP solutions administrator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7b0c7e81-271f-4c71-90bf-e30bdfdbc2f7')]",
+              "Azure Center for SAP solutions reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '05352d14-a920-4328-a0de-4cbe7430e26b')]",
+              "Azure Center for SAP solutions service role": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'aabbc5dd-1af0-458b-a942-81af88f9c138')]",
+              "Azure Kubernetes Service Policy Add-on Deployment": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '18ed5180-3e48-46fd-8541-4ea054d57064')]",
               "Backup Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e467623-bb1f-42f4-a55d-6e525e11384b')]",
               "Backup Operator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '00c29273-979b-4161-815c-10b084fb9324')]",
+              "Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
               "Cosmos DB Operator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '230815da-be43-4aae-9cb4-875f7bd000aa')]",
+              "Desktop Virtualization Virtual Machine Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a959dbd1-f747-45e3-8ba6-dd80f235f97c')]",
               "DevTest Labs User": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '76283e04-6283-4c54-8f91-bcf1374a3c64')]",
+              "DNS Resolver Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0f2ebee7-ffd4-4fc0-b3b7-664099fdad5d')]",
+              "DNS Zone Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'befefa01-2a29-4197-83a8-272ff33ce314')]",
               "DocumentDB Account Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5bd9cd88-fe45-4216-938b-f97437e15450')]",
+              "Domain Services Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'eeaeda52-9324-47f6-8069-5d5bade478b2')]",
+              "Domain Services Reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '361898ef-9ed1-48c2-849c-a832951106bb')]",
+              "LocalNGFirewallAdministrator role": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a8835c7d-b5cb-47fa-b6f0-65ea10ce07a2')]",
               "Log Analytics Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '92aaf0da-9dab-42b6-94a3-d43ce8d16293')]",
               "Log Analytics Reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '73c42c96-874c-492b-b04d-ab87d138a893')]",
               "Managed Application Contributor Role": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '641177b8-a67a-45b9-a033-47bc880bb21e')]",
               "Managed Application Operator Role": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'c7393b34-138c-406f-901b-d8cf2b17e6ae')]",
               "Managed Applications Reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b9331d33-8a36-4f8c-b097-4f54124fdb44')]",
               "Monitoring Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '749f88d5-cbae-40b8-bcfc-e573ddc772fa')]",
-              "Monitoring Metrics Publisher": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
               "Monitoring Reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '43d0d8ad-25c7-4714-9337-8ba259a9fe05')]",
               "Network Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4d97b98b-1d4f-4787-a291-c67834d212e7')]",
+              "Owner": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')]",
               "Private DNS Zone Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b12aa53e-6015-4669-85d0-8515ebb3ae7f')]",
+              "Reader": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
               "Resource Policy Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '36243c78-bf99-498c-9df9-86d9f8d28608')]",
+              "Role Based Access Control Administrator (Preview)": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f58310d9-a9f6-439a-9e8d-f62e7b41a168')]",
               "Site Recovery Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '6670b86e-a3f7-4917-ac9b-5d6ab1be4567')]",
               "Site Recovery Operator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '494ae006-db33-4328-bf46-533a6560a3ca')]",
               "SQL Managed Instance Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4939a1f6-9ae0-4e48-a1e0-f2cbe897382d')]",
               "SQL Security Manager": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '056cd41c-7e88-42e1-933e-88ba6a50c9c3')]",
               "Storage Account Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '17d1049b-9a84-46fb-8f53-869881c3d3ab')]",
+              "Traffic Manager Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4b10055-b0c7-44c2-b00f-c7b5b3550cf7')]",
               "User Access Administrator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9')]",
               "Virtual Machine Administrator Login": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '1c0163c0-47e6-4577-8991-ea5c82e286e4')]",
               "Virtual Machine Contributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '9980e02c-c2be-4d73-94e8-173b1dc7cf3c')]",
-              "Virtual Machine User Login": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'fb879df8-f326-4884-b1cf-06f3ad86be52')]"
+              "Virtual Machine User Login": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'fb879df8-f326-4884-b1cf-06f3ad86be52')]",
+              "Windows Admin Center Administrator Login": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a6333a3e-0164-44c3-b281-7a577aff287f')]"
             }
           },
           "resources": [
@@ -658,12 +797,15 @@
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[format('Microsoft.Network/virtualNetworks/{0}', last(split(parameters('resourceId'), '/')))]",
-              "name": "[guid(last(split(parameters('resourceId'), '/')), parameters('principalIds')[copyIndex()], parameters('roleDefinitionIdOrName'))]",
+              "name": "[guid(resourceId('Microsoft.Network/virtualNetworks', last(split(parameters('resourceId'), '/'))), parameters('principalIds')[copyIndex()], parameters('roleDefinitionIdOrName'))]",
               "properties": {
                 "description": "[parameters('description')]",
                 "roleDefinitionId": "[if(contains(variables('builtInRoleNames'), parameters('roleDefinitionIdOrName')), variables('builtInRoleNames')[parameters('roleDefinitionIdOrName')], parameters('roleDefinitionIdOrName'))]",
                 "principalId": "[parameters('principalIds')[copyIndex()]]",
-                "principalType": "[if(not(empty(parameters('principalType'))), parameters('principalType'), null())]"
+                "principalType": "[if(not(empty(parameters('principalType'))), parameters('principalType'), null())]",
+                "condition": "[if(not(empty(parameters('condition'))), parameters('condition'), null())]",
+                "conditionVersion": "[if(and(not(empty(parameters('conditionVersion'))), not(empty(parameters('condition')))), parameters('conditionVersion'), null())]",
+                "delegatedManagedIdentityResourceId": "[if(not(empty(parameters('delegatedManagedIdentityResourceId'))), parameters('delegatedManagedIdentityResourceId'), null())]"
               }
             }
           ]
@@ -678,28 +820,28 @@
     "resourceGroupName": {
       "type": "string",
       "metadata": {
-        "description": "The resource group the virtual network was deployed into"
+        "description": "The resource group the virtual network was deployed into."
       },
       "value": "[resourceGroup().name]"
     },
     "resourceId": {
       "type": "string",
       "metadata": {
-        "description": "The resource ID of the virtual network"
+        "description": "The resource ID of the virtual network."
       },
       "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('name'))]"
     },
     "name": {
       "type": "string",
       "metadata": {
-        "description": "The name of the virtual network"
+        "description": "The name of the virtual network."
       },
       "value": "[parameters('name')]"
     },
     "subnetNames": {
       "type": "array",
       "metadata": {
-        "description": "The names of the deployed subnets"
+        "description": "The names of the deployed subnets."
       },
       "copy": {
         "count": "[length(parameters('subnets'))]",
@@ -709,12 +851,26 @@
     "subnetResourceIds": {
       "type": "array",
       "metadata": {
-        "description": "The resource IDs of the deployed subnets"
+        "description": "The resource IDs of the deployed subnets."
       },
       "copy": {
         "count": "[length(parameters('subnets'))]",
         "input": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('name'), parameters('subnets')[copyIndex()].name)]"
       }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "The location the resource was deployed into."
+      },
+      "value": "[reference(resourceId('Microsoft.Network/virtualNetworks', parameters('name')), '2022-07-01', 'full').location]"
+    },
+    "diagnosticsLogs": {
+      "type": "array",
+      "metadata": {
+        "description": "The Diagnostic Settings of the virtual network."
+      },
+      "value": "[variables('diagnosticsLogs')]"
     }
   }
 }

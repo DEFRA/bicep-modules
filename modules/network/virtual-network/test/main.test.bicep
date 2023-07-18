@@ -190,7 +190,7 @@ module peervnet '../main.bicep' = {
       }
     ]
 
-    virtualNetworkPeerings: [
+    peerings: [
       {
         remoteVirtualNetworkId: peeringVNET.id
         allowForwardedTraffic: true

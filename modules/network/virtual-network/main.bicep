@@ -16,8 +16,22 @@ param dnsServers array = []
 @description('Optional. Resource ID of the DDoS protection plan to assign the VNET to. If it\'s left blank, DDoS protection will not be configured. If it\'s provided, the VNET created by this template will be attached to the referenced DDoS protection plan. The DDoS protection plan can exist in the same or in a different subscription.')
 param ddosProtectionPlanId string = ''
 
-@description('Optional. Virtual Network Peerings configurations. Please refer to the [virtualNetworkPeerings](virtualNetworkPeerings/readme.md) readme')
-param virtualNetworkPeerings array = []
+@description('Optional. Virtual Network Peerings configurations.')
+param peerings array = []
+
+@description('Optional. Indicates if encryption is enabled on virtual network and if VM without encryption is allowed in encrypted VNet. Requires the EnableVNetEncryption feature to be registered for the subscription and a supported region to use this property.')
+param vnetEncryption bool = false
+
+@allowed([
+  'AllowUnencrypted'
+  'DropUnencrypted'
+])
+@description('Optional. If the encrypted VNet allows VM that does not support encryption. Can only be used when vnetEncryption is enabled.')
+param vnetEncryptionEnforcement string = 'AllowUnencrypted'
+
+@maxValue(30)
+@description('Optional. The flow timeout in minutes for the Virtual Network, which is used to enable connection tracking for intra-VM flows. Possible values are between 4 and 30 minutes. Default value 0 will set the property to null.')
+param flowTimeoutInMinutes int = 0
 
 @description('Optional. Specifies the number of days that logs will be kept for; a value of 0 will retain data indefinitely.')
 @minValue(0)
@@ -37,44 +51,45 @@ param diagnosticEventHubAuthorizationRuleId string = ''
 param diagnosticEventHubName string = ''
 
 @allowed([
+  ''
   'CanNotDelete'
-  'NotSpecified'
   'ReadOnly'
 ])
 @description('Optional. Specify the type of lock.')
-param lock string = 'NotSpecified'
+param lock string = ''
 
-@description('Optional. Array of role assignment objects that contain the \'roleDefinitionIdOrName\' and \'principalId\' to define RBAC role assignments on this resource. In the roleDefinitionIdOrName attribute, you can provide either the display name of the role definition, or its fully qualified ID in the following format: \'/providers/Microsoft.Authorization/roleDefinitions/c2f4ef07-c644-48eb-af81-4b1b4947fb11\'')
+@description('Optional. Array of role assignment objects that contain the \'roleDefinitionIdOrName\' and \'principalId\' to define RBAC role assignments on this resource. In the roleDefinitionIdOrName attribute, you can provide either the display name of the role definition, or its fully qualified ID in the following format: \'/providers/Microsoft.Authorization/roleDefinitions/c2f4ef07-c644-48eb-af81-4b1b4947fb11\'.')
 param roleAssignments array = []
 
 @description('Optional. Tags of the resource.')
 param tags object = {}
 
-@description('Optional. The name of logs that will be streamed.')
+@description('Optional. Enable telemetry via a Globally Unique Identifier (GUID).')
+param enableDefaultTelemetry bool = true
+
+@description('Optional. The name of logs that will be streamed. "allLogs" includes all possible logs for the resource.')
 @allowed([
+  'allLogs'
+
   'VMProtectionAlerts'
 ])
-param logsToEnable array = [
-  'VMProtectionAlerts'
+param diagnosticLogCategoriesToEnable array = [
+  'allLogs'
 ]
 
 @description('Optional. The name of metrics that will be streamed.')
 @allowed([
   'AllMetrics'
 ])
-param metricsToEnable array = [
+param diagnosticMetricsToEnable array = [
   'AllMetrics'
 ]
 
-@allowed([ 'new', 'existing', 'none' ])
-@description('Create a new, use an existing, or provide no default NSG.')
-param newOrExistingNSG string = 'none'
+@description('Optional. The name of the diagnostic setting, if deployed. If left empty, it defaults to "<resourceName>-diagnosticSettings".')
+param diagnosticSettingsName string = ''
 
-@description('Name of default NSG to use for subnets.')
-param networkSecurityGroupName string = uniqueString(resourceGroup().name, location)
-
-var diagnosticsLogs = [for log in logsToEnable: {
-  category: log
+var diagnosticsLogsSpecified = [for category in filter(diagnosticLogCategoriesToEnable, item => item != 'allLogs'): {
+  category: category
   enabled: true
   retentionPolicy: {
     enabled: true
@@ -82,7 +97,18 @@ var diagnosticsLogs = [for log in logsToEnable: {
   }
 }]
 
-var diagnosticsMetrics = [for metric in metricsToEnable: {
+var diagnosticsLogs = contains(diagnosticLogCategoriesToEnable, 'allLogs') ? [
+  {
+    categoryGroup: 'allLogs'
+    enabled: true
+    retentionPolicy: {
+      enabled: true
+      days: diagnosticLogsRetentionInDays
+    }
+  }
+] : diagnosticsLogsSpecified
+
+var diagnosticsMetrics = [for metric in diagnosticMetricsToEnable: {
   category: metric
   timeGrain: null
   enabled: true
@@ -92,22 +118,29 @@ var diagnosticsMetrics = [for metric in metricsToEnable: {
   }
 }]
 
+var dnsServersVar = {
+  dnsServers: array(dnsServers)
+}
+
 var ddosProtectionPlan = {
   id: ddosProtectionPlanId
 }
 
-resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2021-08-01' = if( newOrExistingNSG == 'new' ) {
-  name: networkSecurityGroupName
-  location: location
+var enableReferencedModulesTelemetry = false
+
+resource defaultTelemetry 'Microsoft.Resources/deployments@2021-04-01' = if (enableDefaultTelemetry) {
+  name: 'pid-47ed15a6-730a-4827-bcb4-0fd963ffbd82-${uniqueString(deployment().name, location)}'
+  properties: {
+    mode: 'Incremental'
+    template: {
+      '$schema': 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#'
+      contentVersion: '1.0.0.0'
+      resources: []
+    }
+  }
 }
 
-resource existingNetworkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2021-08-01' existing = if( newOrExistingNSG == 'existing' ) {
-  name: networkSecurityGroupName
-}
-
-var networkSecurityGroupId = { id: newOrExistingNSG == 'new' ? networkSecurityGroup.id : existingNetworkSecurityGroup.id }
-
-resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-05-01' = {
+resource virtualNetwork 'Microsoft.Network/virtualNetworks@2022-07-01' = {
   name: name
   location: location
   tags: tags
@@ -116,8 +149,13 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-05-01' = {
       addressPrefixes: addressPrefixes
     }
     ddosProtectionPlan: !empty(ddosProtectionPlanId) ? ddosProtectionPlan : null
-    dhcpOptions: !empty(dnsServers) ? { dnsServers: array(dnsServers) } : null
+    dhcpOptions: !empty(dnsServers) ? dnsServersVar : null
     enableDdosProtection: !empty(ddosProtectionPlanId)
+    encryption: vnetEncryption == true ? {
+      enabled: vnetEncryption
+      enforcement: vnetEncryptionEnforcement
+    } : null
+    flowTimeoutInMinutes: flowTimeoutInMinutes != 0 ? flowTimeoutInMinutes : null
     subnets: [for subnet in subnets: {
       name: subnet.name
       properties: {
@@ -126,11 +164,17 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-05-01' = {
         applicationGatewayIpConfigurations: contains(subnet, 'applicationGatewayIpConfigurations') ? subnet.applicationGatewayIpConfigurations : []
         delegations: contains(subnet, 'delegations') ? subnet.delegations : []
         ipAllocations: contains(subnet, 'ipAllocations') ? subnet.ipAllocations : []
-        natGateway: contains(subnet, 'natGatewayId') ? { id: subnet.natGatewayId } : null
-        networkSecurityGroup: contains(subnet, 'networkSecurityGroupId') ? { id: subnet.networkSecurityGroupId } : ( newOrExistingNSG != 'none' ? networkSecurityGroupId : null)
+        natGateway: contains(subnet, 'natGatewayId') ? {
+          id: subnet.natGatewayId
+        } : null
+        networkSecurityGroup: contains(subnet, 'networkSecurityGroupId') ? {
+          id: subnet.networkSecurityGroupId
+        } : null
         privateEndpointNetworkPolicies: contains(subnet, 'privateEndpointNetworkPolicies') ? subnet.privateEndpointNetworkPolicies : null
         privateLinkServiceNetworkPolicies: contains(subnet, 'privateLinkServiceNetworkPolicies') ? subnet.privateLinkServiceNetworkPolicies : null
-        routeTable: contains(subnet, 'routeTableId') ? { id: subnet.routeTableId } : null
+        routeTable: contains(subnet, 'routeTableId') ? {
+          id: subnet.routeTableId
+        } : null
         serviceEndpoints: contains(subnet, 'serviceEndpoints') ? subnet.serviceEndpoints : []
         serviceEndpointPolicies: contains(subnet, 'serviceEndpointPolicies') ? subnet.serviceEndpointPolicies : []
       }
@@ -138,8 +182,9 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2021-05-01' = {
   }
 }
 
+
 // Local to Remote peering
-module virtualNetwork_peering_local 'virtualNetworkPeerings/deploy.bicep' = [for (peering, index) in virtualNetworkPeerings: {
+module virtualNetwork_peering_local 'virtualNetworkPeerings/deploy.bicep' = [for (peering, index) in peerings: {
   name: '${uniqueString(deployment().name, location)}-virtualNetworkPeering-local-${index}'
   params: {
     localVnetName: virtualNetwork.name
@@ -150,11 +195,12 @@ module virtualNetwork_peering_local 'virtualNetworkPeerings/deploy.bicep' = [for
     allowVirtualNetworkAccess: contains(peering, 'allowVirtualNetworkAccess') ? peering.allowVirtualNetworkAccess : true
     doNotVerifyRemoteGateways: contains(peering, 'doNotVerifyRemoteGateways') ? peering.doNotVerifyRemoteGateways : true
     useRemoteGateways: contains(peering, 'useRemoteGateways') ? peering.useRemoteGateways : false
+    enableDefaultTelemetry: enableReferencedModulesTelemetry
   }
 }]
 
 // Remote to local peering (reverse)
-module virtualNetwork_peering_remote 'virtualNetworkPeerings/deploy.bicep' = [for (peering, index) in virtualNetworkPeerings: if (contains(peering, 'remotePeeringEnabled') ? peering.remotePeeringEnabled == true : false) {
+module virtualNetwork_peering_remote 'virtualNetworkPeerings/deploy.bicep' = [for (peering, index) in peerings: if (contains(peering, 'remotePeeringEnabled') ? peering.remotePeeringEnabled == true : false) {
   name: '${uniqueString(deployment().name, location)}-virtualNetworkPeering-remote-${index}'
   scope: resourceGroup(split(peering.remoteVirtualNetworkId, '/')[2], split(peering.remoteVirtualNetworkId, '/')[4])
   params: {
@@ -166,20 +212,21 @@ module virtualNetwork_peering_remote 'virtualNetworkPeerings/deploy.bicep' = [fo
     allowVirtualNetworkAccess: contains(peering, 'remotePeeringAllowVirtualNetworkAccess') ? peering.remotePeeringAllowVirtualNetworkAccess : true
     doNotVerifyRemoteGateways: contains(peering, 'remotePeeringDoNotVerifyRemoteGateways') ? peering.remotePeeringDoNotVerifyRemoteGateways : true
     useRemoteGateways: contains(peering, 'remotePeeringUseRemoteGateways') ? peering.remotePeeringUseRemoteGateways : false
+    enableDefaultTelemetry: enableReferencedModulesTelemetry
   }
 }]
 
-resource virtualNetwork_lock 'Microsoft.Authorization/locks@2017-04-01' = if (lock != 'NotSpecified') {
+resource virtualNetwork_lock 'Microsoft.Authorization/locks@2020-05-01' = if (!empty(lock)) {
   name: '${virtualNetwork.name}-${lock}-lock'
   properties: {
-    level: lock
+    level: any(lock)
     notes: lock == 'CanNotDelete' ? 'Cannot delete resource or child resources.' : 'Cannot modify the resource or child resources.'
   }
   scope: virtualNetwork
 }
 
 resource virtualNetwork_diagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(diagnosticStorageAccountId) || !empty(diagnosticWorkspaceId) || !empty(diagnosticEventHubAuthorizationRuleId) || !empty(diagnosticEventHubName)) {
-  name: '${virtualNetwork.name}-diagnosticSettings'
+  name: !empty(diagnosticSettingsName) ? diagnosticSettingsName : '${name}-diagnosticSettings'
   properties: {
     storageAccountId: !empty(diagnosticStorageAccountId) ? diagnosticStorageAccountId : null
     workspaceId: !empty(diagnosticWorkspaceId) ? diagnosticWorkspaceId : null
@@ -191,28 +238,36 @@ resource virtualNetwork_diagnosticSettings 'Microsoft.Insights/diagnosticSetting
   scope: virtualNetwork
 }
 
-module virtualNetwork_rbac '.bicep/nested_rbac.bicep' = [for (roleAssignment, index) in roleAssignments: {
+module virtualNetwork_roleAssignments '.bicep/nested_roleAssignments.bicep' = [for (roleAssignment, index) in roleAssignments: {
   name: '${uniqueString(deployment().name, location)}-VNet-Rbac-${index}'
   params: {
     description: contains(roleAssignment, 'description') ? roleAssignment.description : ''
     principalIds: roleAssignment.principalIds
-    roleDefinitionIdOrName: roleAssignment.roleDefinitionIdOrName
     principalType: contains(roleAssignment, 'principalType') ? roleAssignment.principalType : ''
+    roleDefinitionIdOrName: roleAssignment.roleDefinitionIdOrName
+    condition: contains(roleAssignment, 'condition') ? roleAssignment.condition : ''
+    delegatedManagedIdentityResourceId: contains(roleAssignment, 'delegatedManagedIdentityResourceId') ? roleAssignment.delegatedManagedIdentityResourceId : ''
     resourceId: virtualNetwork.id
   }
 }]
 
-@description('The resource group the virtual network was deployed into')
+@description('The resource group the virtual network was deployed into.')
 output resourceGroupName string = resourceGroup().name
 
-@description('The resource ID of the virtual network')
+@description('The resource ID of the virtual network.')
 output resourceId string = virtualNetwork.id
 
-@description('The name of the virtual network')
+@description('The name of the virtual network.')
 output name string = virtualNetwork.name
 
-@description('The names of the deployed subnets')
+@description('The names of the deployed subnets.')
 output subnetNames array = [for subnet in subnets: subnet.name]
 
-@description('The resource IDs of the deployed subnets')
+@description('The resource IDs of the deployed subnets.')
 output subnetResourceIds array = [for subnet in subnets: az.resourceId('Microsoft.Network/virtualNetworks/subnets', name, subnet.name)]
+
+@description('The location the resource was deployed into.')
+output location string = virtualNetwork.location
+
+@description('The Diagnostic Settings of the virtual network.')
+output diagnosticsLogs array = diagnosticsLogs
